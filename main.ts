@@ -226,29 +226,32 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 
 			const drive = google.drive({ version: 'v3', auth });
 
+			// Clear folder cache at start of sync
+			this.folderIdCache.clear();
+
 			// Get all files from vault - use getFiles() for current vault state
 			const vaultFiles = this.app.vault.getFiles();
 			const vaultFileMap = new Map<string, TFile>();
 
 			console.log(`Vault contains ${vaultFiles.length} files`);
 			for (const file of vaultFiles) {
-				vaultFileMap.set(file.name, file);
-				console.log(`Vault file: ${file.name} (${file.stat.size} bytes)`);
+				vaultFileMap.set(file.path, file); // Use full path as key
+				console.log(`Vault file: ${file.path} (${file.stat.size} bytes)`);
 				// Special logging for PDFs
-				if (file.name.toLowerCase().endsWith('.pdf')) {
-					console.log(`PDF detected: ${file.name}, size: ${file.stat.size}, mtime: ${new Date(file.stat.mtime).toISOString()}`);
+				if (file.path.toLowerCase().endsWith('.pdf')) {
+					console.log(`PDF detected: ${file.path}, size: ${file.stat.size}, mtime: ${new Date(file.stat.mtime).toISOString()}`);
 				}
 			}
 			console.log(`Processing ${vaultFileMap.size} files from vault`);
 
-			// Get all files from Google Drive
-			const driveFiles = await this.getDriveFiles(accessToken);
+			// Get all files from Google Drive (recursively)
+			const driveFiles = await this.getDriveFilesRecursive(accessToken);
 			const driveFileMap = new Map<string, any>();
 
 			console.log(`Drive contains ${driveFiles.length} files`);
 			for (const file of driveFiles) {
-				driveFileMap.set(file.name, file);
-				console.log(`Drive file: ${file.name} (${file.size} bytes, modified: ${file.modifiedTime})`);
+				driveFileMap.set(file.path, file); // Use full path as key
+				console.log(`Drive file: ${file.path} (${file.size} bytes, modified: ${file.modifiedTime})`);
 			}
 
 			let deleted = 0;
@@ -267,14 +270,19 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 			for (const file of vaultFiles) {
 				if (!(file instanceof TFile)) continue;
 
-				const driveFile = driveFileMap.get(file.name);
+				const driveFile = driveFileMap.get(file.path);
 				const vaultMtime = file.stat.mtime;
 
 				if (toDrive) {
 					if (!driveFile) {
 						// File doesn't exist on Drive, upload it
-						console.log(`New file in vault: ${file.name} (${file.stat.size} bytes)`);
-						await this.uploadFile(drive, file, currentAccessToken);
+						console.log(`New file in vault: ${file.path} (${file.stat.size} bytes)`);
+
+						// Extract folder path and ensure it exists on Drive
+						const folderPath = file.path.includes('/') ? file.path.substring(0, file.path.lastIndexOf('/')) : '';
+						const parentFolderId = await this.ensureFolderPathExists(folderPath, currentAccessToken);
+
+						await this.uploadFileToFolder(drive, file, currentAccessToken, parentFolderId);
 						uploaded++;
 					} else {
 						// File exists, check if it has changed since last sync
@@ -289,7 +297,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 							// Check if content is actually identical (e.g., Welcome.md created on different devices)
 							const identicalContent = await this.filesHaveIdenticalContent(file, driveFile, currentAccessToken);
 							if (identicalContent) {
-								console.log(`Skipping conflict for ${file.name} - content is identical`);
+								console.log(`Skipping conflict for ${file.path} - content is identical`);
 								// Files are identical, treat as in sync
 							} else {
 								// Real conflict: different content
@@ -298,9 +306,11 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 							}
 						} else if (vaultChanged) {
 						// Only vault version changed, upload it
-						await this.uploadFile(drive, file, currentAccessToken, driveFile.id);
+						const updateFolderPath = file.path.includes('/') ? file.path.substring(0, file.path.lastIndexOf('/')) : '';
+						const updateParentId = await this.ensureFolderPathExists(updateFolderPath, currentAccessToken);
+						 await this.uploadFileToFolder(drive, file, currentAccessToken, updateParentId, driveFile.id);
 						uploaded++;
-						}
+					}
 						// If only drive changed, it will be handled in the drive files loop below
 					}
 				}
@@ -316,13 +326,13 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 			// Process Drive files
 			if (fromDrive) {
 				for (const driveFile of driveFiles) {
-					const vaultFile = vaultFileMap.get(driveFile.name);
+					const vaultFile = vaultFileMap.get(driveFile.path);
 
 					if (!vaultFile) {
 						// File doesn't exist in vault, check if it should be deleted or downloaded
 						const driveMtime = new Date(driveFile.modifiedTime).getTime();
 
-						console.log(`File ${driveFile.name} exists in Drive but not in vault`);
+						console.log(`File ${driveFile.path} exists in Drive but not in vault`);
 						console.log(`  Drive modified: ${new Date(driveMtime).toISOString()}`);
 						console.log(`  Last sync: ${new Date(lastSync).toISOString()}`);
 						console.log(`  Time diff: ${(driveMtime - lastSync) / 1000} seconds`);
@@ -333,18 +343,18 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 						if (driveMtime > lastSync + 2000) {
 							// File was added to Drive after last sync, download it (if we're doing downloads)
 							if (fromDrive) {
-								console.log(`  -> Downloading ${driveFile.name} (new file in Drive)`);
+								console.log(`  -> Downloading ${driveFile.path} (new file in Drive)`);
 								await this.downloadFile(drive, driveFile, downloadAccessToken);
 								downloaded++;
 							} else {
-								console.log(`  -> Skipping download of ${driveFile.name} (not doing download operations)`);
+								console.log(`  -> Skipping download of ${driveFile.path} (not doing download operations)`);
 							}
 						}
 						// If file exists in Drive but not in vault and wasn't modified recently,
 						// it was likely deleted from vault and should be deleted from Drive too
 						else if (toDrive) {
 							// Only delete if we're doing upload operations (two-way or one-way to Drive)
-							console.log(`  -> Deleting ${driveFile.name} from Google Drive (deleted from vault)`);
+							console.log(`  -> Deleting ${driveFile.path} from Google Drive (deleted from vault)`);
 
 							// Use the current download access token for deletion
 
@@ -364,7 +374,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 								}
 							}
 						} else {
-							console.log(`  -> Skipping deletion of ${driveFile.name} (not doing upload operations)`);
+						console.log(`  -> Skipping deletion of ${driveFile.path} (not doing upload operations)`);
 						}
 					} else {
 						// File exists in both places, check if drive version is newer
@@ -460,6 +470,50 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 		console.log(`Validated Google Drive folder: ${folderData.name}`);
 	}
 
+	private async getDriveFilesRecursive(accessToken: string): Promise<any[]> {
+		const allFiles: any[] = [];
+		const folderPathMap = new Map<string, string>(); // folderId -> path
+
+		// Start with root folder
+		folderPathMap.set(this.settings.folderId, '');
+
+		// Recursively get all files and folders
+		await this.getDriveItemsRecursive(this.settings.folderId, '', accessToken, allFiles, folderPathMap);
+
+		return allFiles;
+	}
+
+	private async getDriveItemsRecursive(folderId: string, currentPath: string, accessToken: string, allFiles: any[], folderPathMap: Map<string, string>) {
+		// Get all items (files and folders) in this folder
+		const listUrl = `https://www.googleapis.com/drive/v3/files?q='${folderId}'%20in%20parents%20and%20trashed=false&fields=files(id,name,modifiedTime,size,mimeType)`;
+		const response = await fetch(listUrl, {
+			headers: {
+				'Authorization': `Bearer ${accessToken}`,
+			},
+		});
+
+		if (!response.ok) {
+			throw new Error(`Failed to list items in folder ${folderId}: ${response.status} ${response.statusText}`);
+		}
+
+		const data = await response.json();
+		const items = data.files || [];
+
+		for (const item of items) {
+			const itemPath = currentPath ? `${currentPath}/${item.name}` : item.name;
+
+			if (item.mimeType === 'application/vnd.google-apps.folder') {
+				// It's a folder - add to path map and recurse
+				folderPathMap.set(item.id, itemPath);
+				await this.getDriveItemsRecursive(item.id, itemPath, accessToken, allFiles, folderPathMap);
+			} else {
+				// It's a file - add to results with full path
+				item.path = itemPath;
+				allFiles.push(item);
+			}
+		}
+	}
+
 	private async getDriveFiles(accessToken: string): Promise<any[]> {
 		const listUrl = `https://www.googleapis.com/drive/v3/files?q='${this.settings.folderId}'%20in%20parents%20and%20trashed=false&fields=files(id,name,modifiedTime,size)`;
 		const response = await fetch(listUrl, {
@@ -474,6 +528,109 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 
 		const data = await response.json();
 		return data.files || [];
+	}
+
+	private async uploadFileToFolder(drive: any, file: TFile, accessToken: string, parentFolderId: string, fileId?: string) {
+		console.log(`🔥 UPLOAD START: ${file.path}, size: ${file.stat.size}, binary: ${this.isBinaryFile(this.getMimeType(file.name))}`);
+		this.logFileInfo(file.name);
+		const mimeType = this.getMimeType(file.name);
+		const isBinary = this.isBinaryFile(mimeType);
+
+		let binaryContent: Buffer | null = null;
+		let textContent: string | null = null;
+
+		if (isBinary) {
+			console.log(`Reading binary file ${file.name}, vault size: ${file.stat.size} bytes`);
+			const arrayBuffer = await this.app.vault.readBinary(file);
+			console.log(`ArrayBuffer length: ${arrayBuffer.byteLength} bytes`);
+			binaryContent = Buffer.from(arrayBuffer);
+			console.log(`Prepared binary content: ${binaryContent.length} bytes`);
+
+			// Special debugging for PDFs
+			if (file.name.toLowerCase().endsWith('.pdf')) {
+				console.log(`PDF DEBUG: vault size=${file.stat.size}, arrayBuffer=${arrayBuffer.byteLength}, buffer=${binaryContent.length}`);
+				if (binaryContent.length === 0) {
+					console.error(`PDF ERROR: Buffer is empty for ${file.name}!`);
+				}
+			}
+		} else {
+			textContent = await this.app.vault.read(file);
+			console.log(`Prepared text content: ${textContent.length} characters`);
+		}
+
+		try {
+			console.log(`Got access token, uploading ${file.name}`);
+
+			let result;
+
+			if (fileId) {
+				// Update existing file
+				console.log(`Updating existing file ${file.name} (${fileId})`);
+				const uploadUrl = `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`;
+				const uploadResponse = await fetch(uploadUrl, {
+					method: 'PATCH',
+					headers: {
+						'Authorization': `Bearer ${accessToken}`,
+						'Content-Type': mimeType,
+					},
+					body: isBinary ? binaryContent! : textContent!,
+				});
+
+				if (!uploadResponse.ok) {
+					throw new Error(`Upload failed: ${uploadResponse.status} ${uploadResponse.statusText}`);
+				}
+
+					result = await uploadResponse.json();
+				} else {
+				// Create new file with multipart
+				console.log(`Creating new file ${file.name}`);
+				const boundary = 'boundary_' + Math.random().toString(36).substr(2);
+				const metadata = {
+					name: file.name,
+					parents: [parentFolderId], // Use the specified parent folder
+				};
+
+				const metadataPart = '--' + boundary + '\r\n' +
+					'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+					JSON.stringify(metadata) + '\r\n';
+				const contentPartHeader = '--' + boundary + '\r\n' +
+					'Content-Type: ' + mimeType + '\r\n\r\n';
+				const endPart = '\r\n--' + boundary + '--';
+
+				const metadataBuffer = Buffer.from(metadataPart, 'utf8');
+				const headerBuffer = Buffer.from(contentPartHeader, 'utf8');
+				const endBuffer = Buffer.from(endPart, 'utf8');
+				const contentBuffer = isBinary ? binaryContent! : Buffer.from(textContent!, 'utf8');
+
+				const body = Buffer.concat([metadataBuffer, headerBuffer, contentBuffer, endBuffer]);
+
+				const uploadUrl = `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart`;
+				const uploadResponse = await fetch(uploadUrl, {
+					method: 'POST',
+					headers: {
+						'Authorization': `Bearer ${accessToken}`,
+						'Content-Type': `multipart/related; boundary=${boundary}`,
+					},
+					body: body,
+				});
+
+				if (!uploadResponse.ok) {
+					throw new Error(`Upload failed: ${uploadResponse.status} ${uploadResponse.statusText}`);
+				}
+
+				result = await uploadResponse.json();
+			}
+
+			console.log(`Upload result:`, result);
+
+			// Special debugging for PDFs - get actual file size from Drive
+			if (file.name.toLowerCase().endsWith('.pdf')) {
+				console.log(`PDF UPLOAD RESULT: size=${result?.size}, id=${result?.id}`);
+			}
+		} catch (uploadError) {
+			console.error(`Upload failed for ${file.name}:`, uploadError);
+			throw uploadError; // Re-throw to be caught by the sync method
+		}
 	}
 
 	private async uploadFile(drive: any, file: TFile, accessToken: string, fileId?: string) {
@@ -604,22 +761,133 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 			content = await downloadResponse.text();
 		}
 
-		console.log(`Downloading file ${driveFile.name}, type: ${mimeType}, binary: ${isBinary}, size: ${driveFile.size} bytes`);
+		console.log(`Downloading file ${driveFile.path}, type: ${mimeType}, binary: ${isBinary}, size: ${driveFile.size} bytes`);
+
+		// Ensure local folder structure exists
+		if (driveFile.path.includes('/')) {
+			const localFolderPath = driveFile.path.substring(0, driveFile.path.lastIndexOf('/'));
+			await this.ensureLocalFolderExists(localFolderPath);
+		}
 
 		if (isBinary) {
 			// For binary files, content is already an ArrayBuffer
 			console.log(`Content type: ArrayBuffer, length: ${content.byteLength}`);
-			await this.app.vault.adapter.writeBinary(driveFile.name, content);
+			await this.app.vault.adapter.writeBinary(driveFile.path, content);
 
 			// Special debugging for PDFs
-			if (driveFile.name.toLowerCase().endsWith('.pdf')) {
+			if (driveFile.path.toLowerCase().endsWith('.pdf')) {
 				console.log(`PDF DOWNLOAD: drive size=${driveFile.size}, content length=${content.byteLength}`);
 			}
 		} else {
 			// For text files, content is already a string
 			console.log(`Content type: string, length: ${content.length}`);
-			await this.app.vault.adapter.write(driveFile.name, content);
+			await this.app.vault.adapter.write(driveFile.path, content);
 		}
+	}
+
+	private async ensureLocalFolderExists(folderPath: string) {
+		const segments = folderPath.split('/').filter(s => s.length > 0);
+		let currentPath = '';
+
+		for (const segment of segments) {
+			currentPath = currentPath ? `${currentPath}/${segment}` : segment;
+			try {
+				await this.app.vault.adapter.mkdir(currentPath);
+			} catch (error) {
+				// Folder might already exist, ignore error
+			}
+		}
+	}
+
+	private folderIdCache: Map<string, string> = new Map(); // localPath -> driveFolderId
+
+	private async createDriveFolder(folderName: string, parentId: string, accessToken: string): Promise<string> {
+		const metadata = {
+			name: folderName,
+			mimeType: 'application/vnd.google-apps.folder',
+			parents: [parentId],
+		};
+
+		const boundary = 'boundary_' + Math.random().toString(36).substr(2);
+		const metadataPart = '--' + boundary + '\r\n' +
+			'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+			JSON.stringify(metadata) + '\r\n--' + boundary + '--';
+
+		const uploadUrl = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
+
+		const response = await fetch(uploadUrl, {
+			method: 'POST',
+			headers: {
+				'Authorization': `Bearer ${accessToken}`,
+				'Content-Type': `multipart/related; boundary=${boundary}`,
+			},
+			body: metadataPart,
+		});
+
+		if (!response.ok) {
+			throw new Error(`Failed to create folder: ${response.status} ${response.statusText}`);
+		}
+
+		const result = await response.json();
+		console.log(`Created folder: ${folderName} (ID: ${result.id})`);
+		return result.id;
+	}
+
+	private async ensureFolderPathExists(localPath: string, accessToken: string): Promise<string> {
+		if (this.folderIdCache.has(localPath)) {
+			return this.folderIdCache.get(localPath)!;
+		}
+
+		if (!localPath || localPath === '.') {
+			return this.settings.folderId; // Root folder
+		}
+
+		// Split path into segments
+		const segments = localPath.split('/').filter(s => s.length > 0);
+		let currentParentId = this.settings.folderId;
+		let currentPath = '';
+
+		for (const segment of segments) {
+			currentPath = currentPath ? `${currentPath}/${segment}` : segment;
+
+			if (this.folderIdCache.has(currentPath)) {
+				currentParentId = this.folderIdCache.get(currentPath)!;
+				continue;
+			}
+
+			// Check if folder already exists on Drive
+			const existingFolderId = await this.findDriveFolder(segment, currentParentId, accessToken);
+			if (existingFolderId) {
+				this.folderIdCache.set(currentPath, existingFolderId);
+				currentParentId = existingFolderId;
+			} else {
+				// Create the folder
+				const newFolderId = await this.createDriveFolder(segment, currentParentId, accessToken);
+				this.folderIdCache.set(currentPath, newFolderId);
+				currentParentId = newFolderId;
+			}
+		}
+
+		return currentParentId;
+	}
+
+	private async findDriveFolder(folderName: string, parentId: string, accessToken: string): Promise<string | null> {
+		const query = `name='${folderName}' and mimeType='application/vnd.google-apps.folder' and '${parentId}' in parents and trashed=false`;
+		const listUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name)`;
+
+		const response = await fetch(listUrl, {
+			headers: {
+				'Authorization': `Bearer ${accessToken}`,
+			},
+		});
+
+		if (!response.ok) {
+			console.error(`Failed to search for folder ${folderName}: ${response.status}`);
+			return null;
+		}
+
+		const data = await response.json();
+		return data.files && data.files.length > 0 ? data.files[0].id : null;
 	}
 
 	private async filesHaveIdenticalContent(vaultFile: TFile, driveFile: any, accessToken: string): Promise<boolean> {
@@ -681,7 +949,9 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 		switch (this.settings.conflictResolution) {
 			case 'overwrite':
 				// Upload vault version (overwrite Drive)
-				await this.uploadFile(drive, vaultFile, freshAccessToken, driveFile.id);
+				const overwriteFolderPath = vaultFile.path.includes('/') ? vaultFile.path.substring(0, vaultFile.path.lastIndexOf('/')) : '';
+				const overwriteParentId = await this.ensureFolderPathExists(overwriteFolderPath, freshAccessToken);
+				await this.uploadFileToFolder(drive, vaultFile, freshAccessToken, overwriteParentId, driveFile.id);
 				break;
 			case 'keep-local':
 				// Do nothing, keep vault version
@@ -692,14 +962,16 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 				break;
 			case 'ask':
 				// Show user choice modal for conflict resolution
-				this.showConflictModal(vaultFile.name, driveFile, async () => {
+				this.showConflictModal(vaultFile.path, driveFile, async () => {
 					// Keep local
-					await this.uploadFile(drive, vaultFile, freshAccessToken, driveFile.id);
-					new Notice(`Kept local version of ${vaultFile.name}`);
+					const localFolderPath = vaultFile.path.includes('/') ? vaultFile.path.substring(0, vaultFile.path.lastIndexOf('/')) : '';
+					const localParentId = await this.ensureFolderPathExists(localFolderPath, freshAccessToken);
+					await this.uploadFileToFolder(drive, vaultFile, freshAccessToken, localParentId, driveFile.id);
+					new Notice(`Kept local version of ${vaultFile.path}`);
 				}, async () => {
 					// Use remote
 					await this.downloadFile(drive, driveFile, freshAccessToken);
-					new Notice(`Downloaded remote version of ${vaultFile.name}`);
+					new Notice(`Downloaded remote version of ${vaultFile.path}`);
 				});
 				break;
 		}
