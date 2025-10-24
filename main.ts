@@ -1,6 +1,7 @@
 import { Plugin, TFile, Notice, PluginSettingTab, Setting, App, Modal } from 'obsidian';
 import { google } from 'googleapis';
 import { Readable } from 'stream';
+import { createHash } from 'crypto';
 
 interface GoogleDriveSyncSettings {
 	clientId: string;
@@ -255,6 +256,13 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 			let uploaded = 0, downloaded = 0, conflicts = 0;
 			const lastSync = this.settings.lastSyncTime;
 
+			// Refresh access token before upload operations
+			const uploadTokenResponse = await auth.getAccessToken();
+			let currentAccessToken = typeof uploadTokenResponse === 'string' ? uploadTokenResponse : uploadTokenResponse.token;
+			if (!currentAccessToken) {
+				throw new Error('Failed to refresh access token for upload operations');
+			}
+
 			// Process vault files
 			for (const file of vaultFiles) {
 				if (!(file instanceof TFile)) continue;
@@ -266,7 +274,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 					if (!driveFile) {
 						// File doesn't exist on Drive, upload it
 						console.log(`New file in vault: ${file.name} (${file.stat.size} bytes)`);
-						await this.uploadFile(drive, file, accessToken);
+						await this.uploadFile(drive, file, currentAccessToken);
 						uploaded++;
 					} else {
 						// File exists, check if it has changed since last sync
@@ -277,17 +285,32 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 						const driveChanged = driveMtime > lastSync + 2000;
 
 						if (vaultChanged && driveChanged) {
-							// Conflict: both modified since last sync
-							await this.handleConflict(drive, file, driveFile, accessToken);
-							conflicts++;
+							// Potential conflict: both modified since last sync
+							// Check if content is actually identical (e.g., Welcome.md created on different devices)
+							const identicalContent = await this.filesHaveIdenticalContent(file, driveFile, currentAccessToken);
+							if (identicalContent) {
+								console.log(`Skipping conflict for ${file.name} - content is identical`);
+								// Files are identical, treat as in sync
+							} else {
+								// Real conflict: different content
+								await this.handleConflict(drive, file, driveFile, currentAccessToken);
+								conflicts++;
+							}
 						} else if (vaultChanged) {
-							// Only vault version changed, upload it
-							await this.uploadFile(drive, file, accessToken, driveFile.id);
-							uploaded++;
+						// Only vault version changed, upload it
+						await this.uploadFile(drive, file, currentAccessToken, driveFile.id);
+						uploaded++;
 						}
 						// If only drive changed, it will be handled in the drive files loop below
 					}
 				}
+			}
+
+			// Refresh access token before download operations
+			const downloadTokenResponse = await auth.getAccessToken();
+			const downloadAccessToken = typeof downloadTokenResponse === 'string' ? downloadTokenResponse : downloadTokenResponse.token;
+			if (!downloadAccessToken) {
+				throw new Error('Failed to refresh access token for download operations');
 			}
 
 			// Process Drive files
@@ -311,7 +334,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 							// File was added to Drive after last sync, download it (if we're doing downloads)
 							if (fromDrive) {
 								console.log(`  -> Downloading ${driveFile.name} (new file in Drive)`);
-								await this.downloadFile(drive, driveFile, accessToken);
+								await this.downloadFile(drive, driveFile, downloadAccessToken);
 								downloaded++;
 							} else {
 								console.log(`  -> Skipping download of ${driveFile.name} (not doing download operations)`);
@@ -323,16 +346,14 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 							// Only delete if we're doing upload operations (two-way or one-way to Drive)
 							console.log(`  -> Deleting ${driveFile.name} from Google Drive (deleted from vault)`);
 
-							// Get access token and delete file using direct HTTP
-							const tokenResponse = await auth.getAccessToken();
-							const accessToken = tokenResponse.token || tokenResponse;
+							// Use the current download access token for deletion
 
-							if (accessToken) {
+							if (downloadAccessToken) {
 								const deleteUrl = `https://www.googleapis.com/drive/v3/files/${driveFile.id}`;
 								const deleteResponse = await fetch(deleteUrl, {
 									method: 'DELETE',
 									headers: {
-										'Authorization': `Bearer ${accessToken}`,
+										'Authorization': `Bearer ${downloadAccessToken}`,
 									},
 								});
 
@@ -358,9 +379,9 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 							// Already handled as conflict in vault files loop
 							continue;
 						} else if (driveChanged) {
-							// Only drive version changed, download it
-							await this.downloadFile(drive, driveFile, accessToken);
-							downloaded++;
+						// Only drive version changed, download it
+						await this.downloadFile(drive, driveFile, downloadAccessToken);
+						downloaded++;
 						}
 						// If only vault changed, it was already handled in the vault files loop above
 					}
@@ -601,28 +622,83 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 		}
 	}
 
+	private async filesHaveIdenticalContent(vaultFile: TFile, driveFile: any, accessToken: string): Promise<boolean> {
+		try {
+			// First check file sizes
+			const vaultSize = vaultFile.stat.size;
+			const driveSize = parseInt(driveFile.size) || 0;
+
+			if (vaultSize !== driveSize) {
+				return false; // Different sizes = different content
+			}
+
+			if (vaultSize === 0) {
+				return true; // Both empty files
+			}
+
+			// For binary files or large files, size comparison is sufficient
+			if (this.isBinaryFile(this.getMimeType(vaultFile.name))) {
+				return true; // Same size binary files are likely identical
+			}
+
+			// For text files, compare content hashes
+			const vaultContent = await this.app.vault.read(vaultFile);
+			const vaultHash = createHash('md5').update(vaultContent).digest('hex');
+
+			// Download drive file content
+			const downloadUrl = `https://www.googleapis.com/drive/v3/files/${driveFile.id}?alt=media`;
+			const downloadResponse = await fetch(downloadUrl, {
+				headers: {
+					'Authorization': `Bearer ${accessToken}`,
+				},
+			});
+
+			if (!downloadResponse.ok) {
+				console.error(`Failed to download ${driveFile.name} for content comparison`);
+				return false;
+			}
+
+			const driveContent = await downloadResponse.text();
+			const driveHash = createHash('md5').update(driveContent).digest('hex');
+
+			return vaultHash === driveHash;
+		} catch (error) {
+			console.error('Error comparing file contents:', error);
+			return false; // On error, assume they're different
+		}
+	}
+
 	private async handleConflict(drive: any, vaultFile: TFile, driveFile: any, accessToken: string) {
+		// Refresh access token before conflict operations to avoid 401 errors
+		const auth = this.getAuthClient();
+		const tokenResponse = await auth.getAccessToken();
+		const freshAccessToken = typeof tokenResponse === 'string' ? tokenResponse : tokenResponse.token;
+
+		if (!freshAccessToken) {
+			throw new Error('Failed to refresh access token for conflict resolution');
+		}
+
 		switch (this.settings.conflictResolution) {
 			case 'overwrite':
 				// Upload vault version (overwrite Drive)
-				await this.uploadFile(drive, vaultFile, driveFile.id);
+				await this.uploadFile(drive, vaultFile, freshAccessToken, driveFile.id);
 				break;
 			case 'keep-local':
 				// Do nothing, keep vault version
 				break;
 			case 'keep-remote':
 				// Download Drive version (overwrite vault)
-				await this.downloadFile(drive, driveFile, accessToken);
+				await this.downloadFile(drive, driveFile, freshAccessToken);
 				break;
 			case 'ask':
 				// Show user choice modal for conflict resolution
 				this.showConflictModal(vaultFile.name, driveFile, async () => {
 					// Keep local
-					await this.uploadFile(drive, vaultFile, accessToken, driveFile.id);
+					await this.uploadFile(drive, vaultFile, freshAccessToken, driveFile.id);
 					new Notice(`Kept local version of ${vaultFile.name}`);
 				}, async () => {
 					// Use remote
-					await this.downloadFile(drive, driveFile, accessToken);
+					await this.downloadFile(drive, driveFile, freshAccessToken);
 					new Notice(`Downloaded remote version of ${vaultFile.name}`);
 				});
 				break;
