@@ -3,8 +3,8 @@
   "name": "Google Drive Sync",
   "version": "1.0.0",
   "description": "Advanced two-way sync between Obsidian and Google Drive with automatic sync, conflict resolution, and support for all file types",
-  "author": "Your Name",
-  "authorUrl": "",
+  "author": "Diogo Palhais",
+  "authorUrl": "https://github.com/diogopalhais",
   "isDesktopOnly": false,
   "minAppVersion": "0.15.0"
 }
