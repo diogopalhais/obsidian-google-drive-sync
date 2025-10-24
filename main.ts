@@ -1087,7 +1087,7 @@ class GoogleDriveSyncSettingTab extends PluginSettingTab {
 		const {containerEl} = this;
 		containerEl.empty();
 
-		containerEl.createEl('h2', {text: 'Google Drive Sync Settings'});
+		containerEl.createEl('h2', {text: 'Google Drive Synced Vault Settings'});
 
 		new Setting(containerEl)
 			.setName('Client ID')

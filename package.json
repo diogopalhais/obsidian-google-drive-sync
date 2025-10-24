@@ -1,9 +1,9 @@
 {
-  "name": "obsidian-google-drive-sync",
+  "name": "obsidian-google-drive-synced-vault",
   "version": "1.0.0",
   "author": "Diogo Palhais",
   "homepage": "https://github.com/diogopalhais/obsidian-google-drive-sync",
-  "description": "Advanced two-way sync between Obsidian and Google Drive with automatic sync, conflict resolution, and support for all file types",
+  "description": "Google Drive Synced Vault - Advanced two-way sync between Obsidian and Google Drive with folder sync, conflict resolution, and support for all file types",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",

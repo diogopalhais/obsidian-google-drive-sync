@@ -1,16 +1,18 @@
-# Obsidian Google Drive Sync Plugin
+# Google Drive Synced Vault
 
-This plugin allows you to sync your Obsidian vault with Google Drive with automatic two-way synchronization, conflict resolution, and support for all file types.
+This plugin allows you to sync your Obsidian vault with Google Drive with automatic two-way synchronization, folder sync, conflict resolution, and support for all file types.
 
 ## Features
 
 - **Two-way sync**: Automatically sync changes in both directions
+- **Folder synchronization**: Maintains complete folder structure between Obsidian and Google Drive
 - **Incremental sync**: Only sync files that have been modified since last sync for better performance and reduced API usage
 - **Automatic sync**: Sync on file changes and at configurable intervals
-- **Conflict resolution**: Choose how to handle conflicts when files are modified in both places
+- **Smart conflict resolution**: Content-aware conflict detection prevents false conflicts for identical files
 - **All file types**: Sync not just markdown files, but all files in your vault including images, PDFs, and binary files
 - **Status indicator**: See sync status in the status bar
 - **Manual controls**: Manual sync commands for one-way or bidirectional sync
+- **Multi-device support**: Seamless synchronization across multiple devices
 
 ## Installation
 
@@ -21,7 +23,7 @@ This plugin allows you to sync your Obsidian vault with Google Drive with automa
 
 ### Manual Installation
 1. Download the latest release from GitHub
-2. Extract the files to `VaultFolder/.obsidian/plugins/obsidian-google-drive-sync/`
+2. Extract the files to `VaultFolder/.obsidian/plugins/obsidian-google-drive-synced-vault/`
 3. Reload plugins in Obsidian
 
 ## Setup
@@ -30,7 +32,7 @@ This plugin allows you to sync your Obsidian vault with Google Drive with automa
 2. Enable the Google Drive API
 3. Create OAuth 2.0 credentials (Desktop application)
 4. Copy the Client ID and Client Secret
-5. In Obsidian, go to Settings > Community plugins > Google Drive Sync
+5. In Obsidian, go to Settings > Community plugins > Google Drive Synced Vault
 6. Enter Client ID and Client Secret in the settings
 7. Create a folder in Google Drive and copy its ID from the URL
 8. Enter the Folder ID in settings
@@ -54,7 +56,7 @@ This plugin allows you to sync your Obsidian vault with Google Drive with automa
 - **Authenticate with Google Drive**: Opens browser for OAuth, paste the code in the modal
 - **Sync Vault to Google Drive**: Upload local changes only
 - **Sync Vault from Google Drive**: Download remote changes only
-- **Sync Both Ways**: Full bidirectional sync
+- **Sync Both Ways**: Full bidirectional sync with folder support
 
 ## Status Bar
 
