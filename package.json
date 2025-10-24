@@ -1,0 +1,42 @@
+{
+  "name": "obsidian-google-drive-sync",
+  "version": "1.0.0",
+  "author": "Your Name",
+  "homepage": "https://github.com/yourusername/obsidian-google-drive-sync",
+  "description": "Advanced two-way sync between Obsidian and Google Drive with automatic sync, conflict resolution, and support for all file types",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+    "build:dev": "node esbuild.config.mjs",
+    "version": "node version-bump.mjs",
+    "clean": "del main.js styles.css 2>nul || echo Files not found",
+    "lint": "eslint . --ext .ts",
+    "release": "npm run build && cp manifest.json LICENSE README.md release/",
+    "release:windows": "npm run build && if not exist release mkdir release && copy release\\main.js release\\ && copy manifest.json release\\ && copy LICENSE release\\ && copy README.md release\\",
+    "setup-vault": "npm run build && node setup-vault.js"
+  },
+  "keywords": ["obsidian", "plugin", "google-drive", "sync", "backup", "cloud", "two-way"],
+  "author": "Your Name",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/obsidian-google-drive-sync.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yourusername/obsidian-google-drive-sync/issues"
+  },
+  "devDependencies": {
+    "@types/node": "^16.11.6",
+    "@typescript-eslint/eslint-plugin": "5.29.0",
+    "@typescript-eslint/parser": "5.29.0",
+    "builtin-modules": "3.3.0",
+    "esbuild": "0.17.3",
+    "obsidian": "latest",
+    "tslib": "2.4.0",
+    "typescript": "4.7.4"
+  },
+  "dependencies": {
+    "googleapis": "^118.0.0"
+  }
+}
