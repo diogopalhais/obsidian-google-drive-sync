@@ -17,7 +17,6 @@
     "setup-vault": "npm run build && node setup-vault.js"
   },
   "keywords": ["obsidian", "plugin", "google-drive", "sync", "backup", "cloud", "two-way"],
-  "author": "Diogo Palhais",
   "license": "MIT",
   "repository": {
     "type": "git",
