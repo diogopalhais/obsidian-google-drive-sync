@@ -215,12 +215,12 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 
 			// Validate folder exists and is accessible
 			try {
-				await this.validateDriveFolder(accessToken);
+			await this.validateDriveFolder(accessToken);
 			} catch (error) {
-				console.error('Drive folder validation failed:', error);
-				new Notice(`Google Drive sync failed: ${error.message}`);
-				this.stopSyncAnimation();
-				return;
+			console.error('Drive folder validation failed:', error);
+			new Notice(`Google Drive sync failed: ${error.message}`);
+			 this.stopSyncAnimation();
+			return;
 			}
 
 			const drive = google.drive({ version: 'v3', auth });
@@ -700,7 +700,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 
 		const authUrl = oauth2Client.generateAuthUrl({
 			access_type: 'offline',
-			scope: ['https://www.googleapis.com/auth/drive.file']
+			scope: ['https://www.googleapis.com/auth/drive']
 		});
 
 		// Open URL in browser
