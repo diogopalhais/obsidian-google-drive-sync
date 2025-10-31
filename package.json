@@ -13,7 +13,7 @@
     "clean": "del main.js styles.css 2>nul || echo Files not found",
     "lint": "eslint . --ext .ts",
     "release": "npm run build && cp manifest.json LICENSE README.md release/",
-    "release:windows": "npm run build && if not exist release mkdir release && copy release\\main.js release\\ && copy manifest.json release\\ && copy LICENSE release\\ && copy README.md release\\",
+    "release:windows": "npm run build && if not exist release mkdir release && copy manifest.json release\\ && copy LICENSE release\\ && copy README.md release\\ && copy styles.css release\\",
     "setup-vault": "npm run build && node setup-vault.js"
   },
   "keywords": ["obsidian", "plugin", "google-drive", "sync", "backup", "cloud", "two-way"],

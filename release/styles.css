@@ -1,0 +1,15 @@
+/* Google Drive Synced Vault Plugin Styles */
+
+.auth-modal-input {
+    width: 100%;
+}
+
+.conflict-buttons {
+    display: flex;
+    gap: 10px;
+    margin-top: 15px;
+}
+
+.conflict-buttons button {
+    flex: 1;
+}

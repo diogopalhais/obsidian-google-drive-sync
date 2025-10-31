@@ -1176,8 +1176,7 @@ class AuthModal extends Modal {
 		contentEl.createEl('h2', { text: 'Enter Authorization Code' });
 		contentEl.createEl('p', { text: 'Paste the code from the Google authorization page:' });
 
-		const input = contentEl.createEl('input', { type: 'text' });
-		input.style.width = '100%';
+		const input = contentEl.createEl('input', { type: 'text', cls: 'auth-modal-input' });
 
 		const button = contentEl.createEl('button', { text: 'Submit' });
 		button.onclick = () => {
