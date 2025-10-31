@@ -233,25 +233,16 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 			const vaultFiles = this.app.vault.getFiles();
 			const vaultFileMap = new Map<string, TFile>();
 
-			console.log(`Vault contains ${vaultFiles.length} files`);
 			for (const file of vaultFiles) {
 				vaultFileMap.set(file.path, file); // Use full path as key
-				console.log(`Vault file: ${file.path} (${file.stat.size} bytes)`);
-				// Special logging for PDFs
-				if (file.path.toLowerCase().endsWith('.pdf')) {
-					console.log(`PDF detected: ${file.path}, size: ${file.stat.size}, mtime: ${new Date(file.stat.mtime).toISOString()}`);
-				}
 			}
-			console.log(`Processing ${vaultFileMap.size} files from vault`);
 
 			// Get all files from Google Drive (recursively)
 			const driveFiles = await this.getDriveFilesRecursive(accessToken);
 			const driveFileMap = new Map<string, any>();
 
-			console.log(`Drive contains ${driveFiles.length} files`);
 			for (const file of driveFiles) {
 				driveFileMap.set(file.path, file); // Use full path as key
-				console.log(`Drive file: ${file.path} (${file.size} bytes, modified: ${file.modifiedTime})`);
 			}
 
 			let deleted = 0;
@@ -332,29 +323,23 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 						// File doesn't exist in vault, check if it should be deleted or downloaded
 						const driveMtime = new Date(driveFile.modifiedTime).getTime();
 
-						console.log(`File ${driveFile.path} exists in Drive but not in vault`);
-						console.log(`  Drive modified: ${new Date(driveMtime).toISOString()}`);
-						console.log(`  Last sync: ${new Date(lastSync).toISOString()}`);
-						console.log(`  Time diff: ${(driveMtime - lastSync) / 1000} seconds`);
-						console.log(`  toDrive: ${toDrive}, fromDrive: ${fromDrive}`);
+
 
 						// If the drive file was created/modified after our last sync, it might be new
 						// If it was created before last sync, it might have been deleted from vault
 						if (driveMtime > lastSync + 2000) {
 							// File was added to Drive after last sync, download it (if we're doing downloads)
 							if (fromDrive) {
-								console.log(`  -> Downloading ${driveFile.path} (new file in Drive)`);
+								console.log(`Downloading ${driveFile.path}`);
 								await this.downloadFile(drive, driveFile, downloadAccessToken);
 								downloaded++;
-							} else {
-								console.log(`  -> Skipping download of ${driveFile.path} (not doing download operations)`);
 							}
 						}
 						// If file exists in Drive but not in vault and wasn't modified recently,
 						// it was likely deleted from vault and should be deleted from Drive too
 						else if (toDrive) {
 							// Only delete if we're doing upload operations (two-way or one-way to Drive)
-							console.log(`  -> Deleting ${driveFile.path} from Google Drive (deleted from vault)`);
+							console.log(`Deleting ${driveFile.path} from Google Drive`);
 
 							// Use the current download access token for deletion
 
@@ -373,8 +358,6 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 									console.error(`Failed to delete ${driveFile.name}: ${deleteResponse.status} ${deleteResponse.statusText}`);
 								}
 							}
-						} else {
-						console.log(`  -> Skipping deletion of ${driveFile.path} (not doing upload operations)`);
 						}
 					} else {
 						// File exists in both places, check if drive version is newer
@@ -531,8 +514,6 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 	}
 
 	private async uploadFileToFolder(drive: any, file: TFile, accessToken: string, parentFolderId: string, fileId?: string) {
-		console.log(`🔥 UPLOAD START: ${file.path}, size: ${file.stat.size}, binary: ${this.isBinaryFile(this.getMimeType(file.name))}`);
-		this.logFileInfo(file.name);
 		const mimeType = this.getMimeType(file.name);
 		const isBinary = this.isBinaryFile(mimeType);
 
@@ -540,32 +521,17 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 		let textContent: string | null = null;
 
 		if (isBinary) {
-			console.log(`Reading binary file ${file.name}, vault size: ${file.stat.size} bytes`);
 			const arrayBuffer = await this.app.vault.readBinary(file);
-			console.log(`ArrayBuffer length: ${arrayBuffer.byteLength} bytes`);
 			binaryContent = Buffer.from(arrayBuffer);
-			console.log(`Prepared binary content: ${binaryContent.length} bytes`);
-
-			// Special debugging for PDFs
-			if (file.name.toLowerCase().endsWith('.pdf')) {
-				console.log(`PDF DEBUG: vault size=${file.stat.size}, arrayBuffer=${arrayBuffer.byteLength}, buffer=${binaryContent.length}`);
-				if (binaryContent.length === 0) {
-					console.error(`PDF ERROR: Buffer is empty for ${file.name}!`);
-				}
-			}
 		} else {
 			textContent = await this.app.vault.read(file);
-			console.log(`Prepared text content: ${textContent.length} characters`);
 		}
 
 		try {
-			console.log(`Got access token, uploading ${file.name}`);
-
 			let result;
 
 			if (fileId) {
 				// Update existing file
-				console.log(`Updating existing file ${file.name} (${fileId})`);
 				const uploadUrl = `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`;
 				const uploadResponse = await fetch(uploadUrl, {
 					method: 'PATCH',
@@ -583,7 +549,6 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 					result = await uploadResponse.json();
 				} else {
 				// Create new file with multipart
-				console.log(`Creating new file ${file.name}`);
 				const boundary = 'boundary_' + Math.random().toString(36).substr(2);
 				const metadata = {
 					name: file.name,
@@ -634,8 +599,6 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 	}
 
 	private async uploadFile(drive: any, file: TFile, accessToken: string, fileId?: string) {
-		console.log(`🔥 UPLOAD START: ${file.name}, size: ${file.stat.size}, binary: ${this.isBinaryFile(this.getMimeType(file.name))}`);
-		this.logFileInfo(file.name);
 		const mimeType = this.getMimeType(file.name);
 		const isBinary = this.isBinaryFile(mimeType);
 
@@ -771,16 +734,9 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 
 		if (isBinary) {
 			// For binary files, content is already an ArrayBuffer
-			console.log(`Content type: ArrayBuffer, length: ${content.byteLength}`);
 			await this.app.vault.adapter.writeBinary(driveFile.path, content);
-
-			// Special debugging for PDFs
-			if (driveFile.path.toLowerCase().endsWith('.pdf')) {
-				console.log(`PDF DOWNLOAD: drive size=${driveFile.size}, content length=${content.byteLength}`);
-			}
 		} else {
 			// For text files, content is already a string
-			console.log(`Content type: string, length: ${content.length}`);
 			await this.app.vault.adapter.write(driveFile.path, content);
 		}
 	}
@@ -829,7 +785,6 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 		}
 
 		const result = await response.json();
-		console.log(`Created folder: ${folderName} (ID: ${result.id})`);
 		return result.id;
 	}
 
@@ -997,13 +952,6 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 			case 'dat': return 'application/octet-stream'; // Obsidian settings file
 			default: return 'application/octet-stream';
 		}
-	}
-
-	private logFileInfo(filename: string) {
-		const ext = filename.split('.').pop()?.toLowerCase();
-		const mimeType = this.getMimeType(filename);
-		const isBinary = this.isBinaryFile(mimeType);
-		console.log(`File ${filename}: ext=${ext}, mime=${mimeType}, binary=${isBinary}`);
 	}
 
 	private isBinaryFile(mimeType: string): boolean {
