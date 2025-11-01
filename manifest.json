@@ -6,6 +6,5 @@
   "author": "Diogo Palhais",
   "authorUrl": "https://github.com/diogopalhais",
   "isDesktopOnly": false,
-  "minAppVersion": "0.15.0",
-  "styles": "styles.css"
+  "minAppVersion": "0.15.0"
 }
